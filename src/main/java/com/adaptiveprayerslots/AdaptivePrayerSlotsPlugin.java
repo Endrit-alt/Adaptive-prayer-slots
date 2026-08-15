@@ -34,8 +34,8 @@ import net.runelite.client.plugins.PluginDescriptor;
 
 @PluginDescriptor(
 	name = "Adaptive Prayer Slots",
-	description = "Replaces unavailable top-tier prayers without moving their slots",
-	tags = {"prayer", "lms", "last man standing", "pvp", "layout"}
+	description = "Keeps prayer slots consistent across different LMS builds",
+	tags = {"lms", "last man standing", "prayer", "prayers", "pvp", "minigame"}
 )
 public class AdaptivePrayerSlotsPlugin extends Plugin
 {
