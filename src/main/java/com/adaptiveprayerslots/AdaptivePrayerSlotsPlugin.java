@@ -267,7 +267,6 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		displayedChoices.clear();
 		restoreQuickPrayerBaseline();
 		invalidateAllCaches();
-		redrawPrayerBook();
 	}
 
 	static int resolveEffectiveLevel(boolean inLms, int realLevel, int boostedLevel)
