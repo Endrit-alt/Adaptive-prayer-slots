@@ -40,7 +40,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 public class AdaptivePrayerSlotsPlugin extends Plugin
 {
 	private static final String REORDER_WARNING =
-		"Adaptive Prayer Slots: lock prayer reordering before arranging controlled prayers.";
+		"Adaptive Prayer Slots: temporarily paused while prayer reordering is enabled.";
 
 	@Inject
 	private Client client;
@@ -56,6 +56,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private boolean running;
 	private boolean controllingLayout;
+	private boolean suspendedForReordering;
 	private boolean reorderWarningShown;
 	private int cachedPrayerBookVariant = -1;
 	private EnumComposition cachedNormalPrayerBook;
@@ -84,6 +85,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		clientThread.invokeLater(() ->
 		{
 			controllingLayout = false;
+			suspendedForReordering = false;
 			displayedChoices.clear();
 			restoreQuickPrayerBaseline();
 			invalidateAllCaches();
@@ -184,7 +186,6 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			return;
 		}
 
-		controllingLayout = true;
 		int effectivePrayerLevel = resolveEffectiveLevel(
 			inLms,
 			client.getRealSkillLevel(Skill.PRAYER),
@@ -199,12 +200,13 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private void stopControllingLayout()
 	{
 		reorderWarningShown = false;
-		if (!controllingLayout)
+		if (!controllingLayout && !suspendedForReordering)
 		{
 			return;
 		}
 
 		controllingLayout = false;
+		suspendedForReordering = false;
 		displayedChoices.clear();
 		restoreQuickPrayerBaseline();
 		invalidateAllCaches();
@@ -214,7 +216,27 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private void applySwaps(boolean inLms, int effectivePrayerLevel, int effectiveDefenceLevel)
 	{
 		EnumComposition prayerBook = getNormalPrayerBook();
-		boolean reorderingUnlocked = false;
+		Set<PrayerChoice> allControlledChoices = EnumSet.noneOf(PrayerChoice.class);
+		for (PrayerSwap swap : PrayerSwap.values())
+		{
+			if (isEnabled(swap))
+			{
+				allControlledChoices.addAll(getControlledChoices(swap));
+			}
+		}
+
+		// RuneLite's unlocked reorder mode needs every prayer widget visible so each
+		// position can be selected and dragged. Let the core plugin own the layout
+		// until reordering is locked again.
+		if (isReorderingUnlocked(prayerBook, allControlledChoices))
+		{
+			suspendForReordering();
+			return;
+		}
+
+		suspendedForReordering = false;
+		updateReorderWarning(false);
+		controllingLayout = true;
 		for (PrayerSwap swap : PrayerSwap.values())
 		{
 			if (!isEnabled(swap))
@@ -229,10 +251,23 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			applySwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
 			applyQuickPrayerSwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
 			displayedChoices.put(swap, selected);
-			reorderingUnlocked |= isReorderingUnlocked(prayerBook, controlledChoices);
+		}
+	}
+
+	private void suspendForReordering()
+	{
+		updateReorderWarning(true);
+		if (suspendedForReordering)
+		{
+			return;
 		}
 
-		updateReorderWarning(reorderingUnlocked);
+		suspendedForReordering = true;
+		controllingLayout = false;
+		displayedChoices.clear();
+		restoreQuickPrayerBaseline();
+		invalidateAllCaches();
+		redrawPrayerBook();
 	}
 
 	static int resolveEffectiveLevel(boolean inLms, int realLevel, int boostedLevel)
