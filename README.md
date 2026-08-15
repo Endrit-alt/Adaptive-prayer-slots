@@ -26,4 +26,4 @@ gradlew.bat test
 
 ## Plugin Hub preparation
 
-The project includes standard Plugin Hub properties, a BSD 2-Clause license, and a GitHub Actions test build. After publishing the repository, copy `plugin-hub-manifest.properties.example` into your fork of `runelite/plugin-hub` as `plugins/adaptive-prayer-slots`, then replace its repository URL and commit placeholder. A compliant root `icon.png` still needs to be added before submission.
+The project includes standard Plugin Hub properties, a BSD 2-Clause license, and a GitHub Actions test build. Copy `plugin-hub-manifest.properties.example` into your fork of `runelite/plugin-hub` as `plugins/adaptive-prayer-slots`, then replace its commit placeholder with the full commit hash being submitted. A compliant root `icon.png` still needs to be added before submission.
