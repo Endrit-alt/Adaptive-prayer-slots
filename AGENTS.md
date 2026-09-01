@@ -31,6 +31,7 @@ Despite the LMS-focused name and Plugin Hub description, `LMS only` defaults to 
 | `AGENTS.md` | This mandatory living architecture, operations, and testing guide. |
 | `README.md` | Deliberately short, user-facing explanation of LMS behavior. Keep technical implementation details here rather than expanding the README. |
 | `LICENSE` | BSD 2-Clause license, copyright 2026 Endrit. |
+| `icon.png` | Root-level Plugin Hub icon. It is a 48x72 PNG, the maximum dimensions accepted by Plugin Hub. It is presentation metadata and is not loaded by the plugin at runtime. |
 | `runelite-plugin.properties` | Plugin Hub metadata: visual name, author, short description, search tags, plugin entry class, version, and standard-build declaration. |
 | `plugin-hub-manifest.properties.example` | Template for a RuneLite Plugin Hub manifest entry. Its `commit` placeholder must be replaced with the full 40-character commit hash submitted to Plugin Hub. |
 | `build.gradle` | Java build, RuneLite and JUnit dependencies, Java 11 target, version, and the local RuneLite `run` task. |
@@ -311,7 +312,7 @@ The remaining repeated work per pass includes assembling controlled `EnumSet`s, 
 
 ## Assets and user-visible text
 
-There are currently no image, icon, sound, font, or other asset files. A custom Plugin Hub icon was intentionally deferred. The Plugin Hub therefore uses its default presentation unless an external repository/submission supplies something separately.
+The repository contains one asset: root-level `icon.png`, a 48x72, 32-bit PNG used by Plugin Hub as the plugin's listing icon. It is not referenced or loaded by the Java runtime. Plugin Hub accepts icons no larger than 48x72 pixels, so do not increase either dimension. There are no sound, font, overlay, or other runtime assets.
 
 User-visible strings live in:
 
@@ -388,7 +389,6 @@ For a Plugin Hub submission, update the example manifest's placeholder in the su
 9. Shutdown restoration is scheduled asynchronously on `ClientThread`; forced process termination cannot guarantee that cleanup callback runs. The next normal RuneLite interface construction should rebuild widgets regardless.
 10. Normal layout restoration depends on the prayer-book `onVarTransmitListener` existing. If it is absent, `redrawPrayerBook()` is a no-op.
 11. Do not invoke the redraw script synchronously from `ScriptPostFired`; this can crash the client through script reentrancy.
-12. There is no custom icon or other asset yet.
 
 ## Manual testing checklist
 
@@ -455,5 +455,6 @@ Run `build` first, then use the development `run` task and watch the client log 
 - [ ] Run `.\gradlew.bat build` on Windows or `./gradlew build` on POSIX and confirm all tests pass.
 - [ ] Verify `runelite-plugin.properties`, `@PluginDescriptor`, config text, README, and this guide describe the same current behavior.
 - [ ] Verify the release version and Plugin Hub manifest commit are intentional.
+- [ ] Verify `icon.png` is a valid PNG no larger than 48x72 pixels and remains legible at Plugin Hub display size.
 - [ ] Verify any added/removed source, test, workflow, metadata, or asset file is reflected in the repository map and relevant sections of this guide.
 - [ ] Verify removed behavior has also been removed from this guide and the manual checklist.
