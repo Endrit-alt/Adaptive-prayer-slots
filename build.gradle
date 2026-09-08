@@ -19,7 +19,6 @@ def pluginMainClass = 'com.adaptiveprayerslots.AdaptivePrayerSlotsPluginTest'
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
-	testImplementation 'junit:junit:4.13.2'
 	testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
 }
 
