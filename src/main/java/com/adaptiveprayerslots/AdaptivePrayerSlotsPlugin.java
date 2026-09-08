@@ -64,6 +64,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private final Map<PrayerChoice, QuickPrayerWidgets> quickPrayerWidgetCache = new EnumMap<>(PrayerChoice.class);
 	private final Map<PrayerSwap, PrayerChoice> displayedChoices = new EnumMap<>(PrayerSwap.class);
 	private final Map<Widget, WidgetState> quickPrayerBaseline = new IdentityHashMap<>();
+	private final PrayerRedrawScheduler redrawScheduler = new PrayerRedrawScheduler(
+		task -> clientThread.invokeLater(task), this::redrawPrayerBook, this::applyCurrentSwaps);
+	private Widget cachedQuickPrayerContainer;
 
 	@Provides
 	AdaptivePrayerSlotsConfig provideConfig(ConfigManager configManager)
@@ -84,12 +87,16 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		running = false;
 		clientThread.invokeLater(() ->
 		{
+			if (running)
+			{
+				return;
+			}
 			controllingLayout = false;
 			suspendedForReordering = false;
 			displayedChoices.clear();
 			restoreQuickPrayerBaseline();
 			invalidateAllCaches();
-			redrawPrayerBook();
+			redrawScheduler.request();
 		});
 	}
 
@@ -114,6 +121,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
+		redrawScheduler.cancel();
 		invalidateAllCaches();
 		reorderWarningShown = false;
 		if (running && event.getGameState() == GameState.LOGGED_IN)
@@ -139,6 +147,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		{
 			quickPrayerBaseline.clear();
 			quickPrayerWidgetCache.clear();
+			cachedQuickPrayerContainer = null;
 			applyCurrentSwaps();
 		}
 		else if (scriptId == ScriptID.PRAYER_REDRAW)
@@ -159,17 +168,23 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		{
 			clientThread.invokeLater(() ->
 			{
+				if (!running)
+				{
+					return;
+				}
+				controllingLayout = false;
+				suspendedForReordering = false;
+				displayedChoices.clear();
 				restoreQuickPrayerBaseline();
 				invalidateAllCaches();
-				redrawPrayerBook();
-				applyCurrentSwaps();
+				redrawScheduler.request();
 			});
 		}
 	}
 
 	private void applyCurrentSwaps()
 	{
-		if (!running || client.getGameState() != GameState.LOGGED_IN)
+		if (!running || client.getGameState() != GameState.LOGGED_IN || redrawScheduler.isPending())
 		{
 			return;
 		}
@@ -210,7 +225,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		displayedChoices.clear();
 		restoreQuickPrayerBaseline();
 		invalidateAllCaches();
-		redrawPrayerBook();
+		redrawScheduler.request();
 	}
 
 	private void applySwaps(boolean inLms, int effectivePrayerLevel, int effectiveDefenceLevel)
@@ -236,18 +251,39 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 		suspendedForReordering = false;
 		updateReorderWarning(false);
-		controllingLayout = true;
+		Map<PrayerSwap, PrayerChoice> selections = new EnumMap<>(PrayerSwap.class);
 		for (PrayerSwap swap : PrayerSwap.values())
 		{
 			if (!isEnabled(swap))
 			{
-				displayedChoices.remove(swap);
 				continue;
 			}
 
+			PrayerChoice selected = PrayerSelection.select(
+				swap, config.meleeFallbackChain(), inLms, effectivePrayerLevel, effectiveDefenceLevel,
+				this::isUnlocked, displayedChoices.get(swap), choice -> client.isPrayerActive(choice.getPrayer()));
+			if (selected != null)
+			{
+				selections.put(swap, selected);
+			}
+		}
+
+		for (PrayerSwap previous : displayedChoices.keySet())
+		{
+			if (!selections.containsKey(previous))
+			{
+				// Restore a slot that no longer has a usable prayer, then reapply remaining slots.
+				stopControllingLayout();
+				return;
+			}
+		}
+
+		controllingLayout = !selections.isEmpty();
+		for (Map.Entry<PrayerSwap, PrayerChoice> entry : selections.entrySet())
+		{
+			PrayerSwap swap = entry.getKey();
+			PrayerChoice selected = entry.getValue();
 			Set<PrayerChoice> controlledChoices = getControlledChoices(swap);
-			PrayerChoice desired = choosePrayer(swap, inLms, effectivePrayerLevel, effectiveDefenceLevel);
-			PrayerChoice selected = preserveActiveFallback(swap, desired, controlledChoices);
 			applySwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
 			applyQuickPrayerSwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
 			displayedChoices.put(swap, selected);
@@ -274,44 +310,6 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		return inLms ? boostedLevel : realLevel;
 	}
 
-	private PrayerChoice choosePrayer(
-		PrayerSwap swap,
-		boolean inLms,
-		int effectivePrayerLevel,
-		int effectiveDefenceLevel)
-	{
-		if (isChoiceEligible(swap.getHighPrayer(), inLms, effectivePrayerLevel, effectiveDefenceLevel))
-		{
-			return swap.getHighPrayer();
-		}
-
-		if (swap == PrayerSwap.MELEE
-			&& config.meleeFallbackChain() == MeleeFallbackChain.CHIVALRY_THEN_ULTIMATE
-			&& isChoiceEligible(PrayerChoice.CHIVALRY, inLms, effectivePrayerLevel, effectiveDefenceLevel))
-		{
-			return PrayerChoice.CHIVALRY;
-		}
-
-		return swap.getDefaultFallback();
-	}
-
-	private PrayerChoice preserveActiveFallback(
-		PrayerSwap swap,
-		PrayerChoice desired,
-		Set<PrayerChoice> controlledChoices)
-	{
-		PrayerChoice current = displayedChoices.get(swap);
-		if (current != null
-			&& current != desired
-			&& current != swap.getHighPrayer()
-			&& controlledChoices.contains(current)
-			&& client.isPrayerActive(current.getPrayer()))
-		{
-			return current;
-		}
-		return desired;
-	}
-
 	private Set<PrayerChoice> getControlledChoices(PrayerSwap swap)
 	{
 		EnumSet<PrayerChoice> choices = EnumSet.of(swap.getHighPrayer(), swap.getDefaultFallback());
@@ -323,18 +321,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		return choices;
 	}
 
-	private boolean isChoiceEligible(PrayerChoice choice, boolean inLms, int prayer, int defence)
+	private boolean isUnlocked(PrayerUnlock unlock)
 	{
-		if (!choice.meetsLevels(prayer, defence))
-		{
-			return false;
-		}
-		if (inLms || choice.getUnlock() == PrayerUnlock.NONE)
-		{
-			return true;
-		}
-
-		switch (choice.getUnlock())
+		switch (unlock)
 		{
 			case PIETY:
 				return client.getVarbitValue(VarbitID.KR_KNIGHTWAVES_STATE) >= 8
@@ -354,22 +343,24 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		PrayerChoice selectedChoice,
 		Set<PrayerChoice> controlledChoices)
 	{
-		Widget highPrayer = findPrayerWidget(prayerBook, highChoice);
-		Widget selectedPrayer = findPrayerWidget(prayerBook, selectedChoice);
-		if (highPrayer == null || selectedPrayer == null)
+		Map<PrayerChoice, Widget> resolved = new EnumMap<>(PrayerChoice.class);
+		for (PrayerChoice choice : controlledChoices)
 		{
-			return;
+			Widget widget = findPrayerWidget(prayerBook, choice);
+			if (widget == null)
+			{
+				return;
+			}
+			resolved.put(choice, widget);
 		}
+		Widget highPrayer = resolved.get(highChoice);
+		Widget selectedPrayer = resolved.get(selectedChoice);
 
 		for (PrayerChoice choice : controlledChoices)
 		{
 			if (choice != selectedChoice)
 			{
-				Widget widget = findPrayerWidget(prayerBook, choice);
-				if (widget != null)
-				{
-					setHidden(widget, true);
-				}
+				setHidden(resolved.get(choice), true);
 			}
 		}
 		setPosition(selectedPrayer, highPrayer.getOriginalX(), highPrayer.getOriginalY());
@@ -382,26 +373,31 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		PrayerChoice selectedChoice,
 		Set<PrayerChoice> controlledChoices)
 	{
-		QuickPrayerWidgets highPrayer = findQuickPrayerWidgets(prayerBook, highChoice);
-		QuickPrayerWidgets selectedPrayer = findQuickPrayerWidgets(prayerBook, selectedChoice);
-		if (highPrayer == null || selectedPrayer == null)
-		{
-			return;
-		}
-
+		Map<PrayerChoice, QuickPrayerWidgets> resolved = new EnumMap<>(PrayerChoice.class);
 		for (PrayerChoice choice : controlledChoices)
 		{
 			QuickPrayerWidgets widgets = findQuickPrayerWidgets(prayerBook, choice);
-			if (widgets != null)
+			if (widgets == null)
 			{
-				captureQuickPrayerBaseline(widgets);
-				if (choice != selectedChoice)
-				{
-					setHidden(widgets, true);
-				}
+				return;
+			}
+			resolved.put(choice, widgets);
+		}
+
+		// Resolve and snapshot the entire slot before changing any visibility or position.
+		for (QuickPrayerWidgets widgets : resolved.values())
+		{
+			captureQuickPrayerBaseline(widgets);
+		}
+		for (PrayerChoice choice : controlledChoices)
+		{
+			if (choice != selectedChoice)
+			{
+				setHidden(resolved.get(choice), true);
 			}
 		}
-		moveToBaselineSlots(selectedPrayer, highPrayer);
+		QuickPrayerWidgets selectedPrayer = resolved.get(selectedChoice);
+		moveToBaselineSlots(selectedPrayer, resolved.get(highChoice));
 		setHidden(selectedPrayer, false);
 	}
 
@@ -431,13 +427,13 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private QuickPrayerWidgets findQuickPrayerWidgets(EnumComposition prayerBook, PrayerChoice choice)
 	{
-		QuickPrayerWidgets cached = quickPrayerWidgetCache.get(choice);
-		if (cached != null)
-		{
-			return cached;
-		}
-
 		Widget container = client.getWidget(InterfaceID.Quickprayer.BUTTONS);
+		if (container != cachedQuickPrayerContainer)
+		{
+			quickPrayerWidgetCache.clear();
+			quickPrayerBaseline.clear();
+			cachedQuickPrayerContainer = container;
+		}
 		if (container == null)
 		{
 			return null;
@@ -450,10 +446,21 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			return null;
 		}
 
+		QuickPrayerWidgets cached = quickPrayerWidgetCache.get(choice);
+		if (cached != null && cached.isCurrent(children))
+		{
+			return cached;
+		}
+		quickPrayerWidgetCache.remove(choice);
+
 		int prayerId = -1;
 		int sortedIndex = 0;
 		int[] keys = prayerBook.getKeys();
 		int[] values = prayerBook.getIntVals();
+		if (keys.length != values.length)
+		{
+			return null;
+		}
 		for (int i = 0; i < values.length; i++)
 		{
 			int level = client.getItemDefinition(values[i]).getIntValue(ParamID.OC_PRAYER_LEVEL);
@@ -468,13 +475,13 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		}
 
 		int spriteIndex = prayerCount + 2 * sortedIndex;
-		if (prayerId < 0 || prayerId >= prayerCount || spriteIndex + 1 >= children.length)
+		if (prayerId < 0 || prayerId >= prayerCount || spriteIndex + 1 >= children.length
+			|| children[prayerId] == null || children[spriteIndex] == null || children[spriteIndex + 1] == null)
 		{
 			return null;
 		}
 
-		QuickPrayerWidgets widgets = new QuickPrayerWidgets(
-			children[prayerId], children[spriteIndex], children[spriteIndex + 1]);
+		QuickPrayerWidgets widgets = new QuickPrayerWidgets(children, prayerId, spriteIndex);
 		quickPrayerWidgetCache.put(choice, widgets);
 		return widgets;
 	}
@@ -566,12 +573,19 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private void restoreQuickPrayerBaseline()
 	{
-		for (Map.Entry<Widget, WidgetState> entry : quickPrayerBaseline.entrySet())
+		Widget container = client.getWidget(InterfaceID.Quickprayer.BUTTONS);
+		Widget[] children = container == null ? null : container.getDynamicChildren();
+		if (children != null)
 		{
-			Widget widget = entry.getKey();
-			WidgetState state = entry.getValue();
-			setPosition(widget, state.x, state.y);
-			setHidden(widget, state.hidden);
+			for (Widget widget : children)
+			{
+				WidgetState state = quickPrayerBaseline.get(widget);
+				if (state != null)
+				{
+					setPosition(widget, state.x, state.y);
+					setHidden(widget, state.hidden);
+				}
+			}
 		}
 		quickPrayerBaseline.clear();
 		quickPrayerWidgetCache.clear();
@@ -610,6 +624,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	{
 		prayerWidgetCache.clear();
 		quickPrayerWidgetCache.clear();
+		cachedQuickPrayerContainer = null;
 		cachedNormalPrayerBook = null;
 		cachedPrayerBookVariant = -1;
 	}
@@ -631,6 +646,12 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private void redrawPrayerBook()
 	{
+		// Only PrayerRedrawScheduler may call this, after the current script has returned.
+		if (client.getGameState() != GameState.LOGGED_IN
+			|| client.getVarbitValue(VarbitID.PRAYERBOOK) != 0)
+		{
+			return;
+		}
 		Widget prayerBook = client.getWidget(InterfaceID.PRAYERBOOK, 0);
 		if (prayerBook != null && prayerBook.getOnVarTransmitListener() != null)
 		{
@@ -643,12 +664,23 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		private final Widget target;
 		private final Widget sprite;
 		private final Widget toggle;
+		private final int targetIndex;
+		private final int spriteIndex;
 
-		private QuickPrayerWidgets(Widget target, Widget sprite, Widget toggle)
+		private QuickPrayerWidgets(Widget[] children, int targetIndex, int spriteIndex)
 		{
-			this.target = target;
-			this.sprite = sprite;
-			this.toggle = toggle;
+			this.target = children[targetIndex];
+			this.sprite = children[spriteIndex];
+			this.toggle = children[spriteIndex + 1];
+			this.targetIndex = targetIndex;
+			this.spriteIndex = spriteIndex;
+		}
+
+		private boolean isCurrent(Widget[] children)
+		{
+			return targetIndex < children.length && spriteIndex + 1 < children.length
+				&& children[targetIndex] == target && children[spriteIndex] == sprite
+				&& children[spriteIndex + 1] == toggle;
 		}
 	}
 
