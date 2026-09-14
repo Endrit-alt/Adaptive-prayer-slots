@@ -4,6 +4,8 @@ enum PrayerUnlock
 {
 	NONE,
 	PIETY,
+	DEADEYE,
+	MYSTIC_VIGOUR,
 	RIGOUR,
 	AUGURY
 }

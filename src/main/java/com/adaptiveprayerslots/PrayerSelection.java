@@ -11,6 +11,7 @@ final class PrayerSelection
 	// A null result means the core Prayer plugin should retain this slot.
 	static PrayerChoice select(
 		PrayerSwap swap,
+		PrayerChoice fallback,
 		MeleeFallbackChain chain,
 		boolean inLms,
 		int prayer,
@@ -24,22 +25,28 @@ final class PrayerSelection
 		PrayerChoice desired;
 		if (isEligible(swap.getHighPrayer(), inLms, prayer, defence, unlocked))
 		{
+			if (fallback != swap.getDefaultFallback())
+			{
+				// Keep the core layout when the Titan prayer and high prayer coexist.
+				// Only delay restoration for an already-selected active Titan fallback.
+				return previous == fallback && active.test(fallback) ? fallback : null;
+			}
 			desired = swap.getHighPrayer();
 		}
 		else if (useChivalry && isEligible(PrayerChoice.CHIVALRY, inLms, prayer, defence, unlocked))
 		{
 			desired = PrayerChoice.CHIVALRY;
 		}
-		else if (isEligible(swap.getDefaultFallback(), inLms, prayer, defence, unlocked))
+		else if (isEligible(fallback, inLms, prayer, defence, unlocked))
 		{
-			desired = swap.getDefaultFallback();
+			desired = fallback;
 		}
 		else
 		{
 			return null;
 		}
 
-		if ((previous == swap.getDefaultFallback() || (useChivalry && previous == PrayerChoice.CHIVALRY))
+		if ((previous == fallback || (useChivalry && previous == PrayerChoice.CHIVALRY))
 			&& active.test(previous))
 		{
 			return previous;
@@ -49,9 +56,9 @@ final class PrayerSelection
 		{
 			return PrayerChoice.CHIVALRY;
 		}
-		if (active.test(swap.getDefaultFallback()))
+		if (active.test(fallback))
 		{
-			return swap.getDefaultFallback();
+			return fallback;
 		}
 		return desired;
 	}

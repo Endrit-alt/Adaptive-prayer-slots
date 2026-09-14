@@ -231,6 +231,10 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private void applySwaps(boolean inLms, int effectivePrayerLevel, int effectiveDefenceLevel)
 	{
 		EnumComposition prayerBook = getNormalPrayerBook();
+		if (redrawScheduler.isPending())
+		{
+			return;
+		}
 		Set<PrayerChoice> allControlledChoices = EnumSet.noneOf(PrayerChoice.class);
 		for (PrayerSwap swap : PrayerSwap.values())
 		{
@@ -260,7 +264,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			}
 
 			PrayerChoice selected = PrayerSelection.select(
-				swap, config.meleeFallbackChain(), inLms, effectivePrayerLevel, effectiveDefenceLevel,
+				swap, getFallback(swap), config.meleeFallbackChain(), inLms, effectivePrayerLevel, effectiveDefenceLevel,
 				this::isUnlocked, displayedChoices.get(swap), choice -> client.isPrayerActive(choice.getPrayer()));
 			if (selected != null)
 			{
@@ -272,7 +276,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		{
 			if (!selections.containsKey(previous))
 			{
-				// Restore a slot that no longer has a usable prayer, then reapply remaining slots.
+				// Restore slots with no usable choice or a Titan/high pair left to the core layout.
 				stopControllingLayout();
 				return;
 			}
@@ -310,9 +314,24 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		return inLms ? boostedLevel : realLevel;
 	}
 
+	private PrayerChoice getFallback(PrayerSwap swap)
+	{
+		// Use the same variant as widget lookup: Titan prayers replace, rather than
+		// coexist with, Eagle Eye/Mystic Might in the prayer-book enum.
+		if (swap == PrayerSwap.RANGED && (cachedPrayerBookVariant & 1) != 0)
+		{
+			return PrayerChoice.DEADEYE;
+		}
+		if (swap == PrayerSwap.MAGIC && (cachedPrayerBookVariant & 2) != 0)
+		{
+			return PrayerChoice.MYSTIC_VIGOUR;
+		}
+		return swap.getDefaultFallback();
+	}
+
 	private Set<PrayerChoice> getControlledChoices(PrayerSwap swap)
 	{
-		EnumSet<PrayerChoice> choices = EnumSet.of(swap.getHighPrayer(), swap.getDefaultFallback());
+		EnumSet<PrayerChoice> choices = EnumSet.of(swap.getHighPrayer(), getFallback(swap));
 		if (swap == PrayerSwap.MELEE
 			&& config.meleeFallbackChain() == MeleeFallbackChain.CHIVALRY_THEN_ULTIMATE)
 		{
@@ -332,6 +351,10 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 				return client.getVarbitValue(VarbitID.PRAYER_RIGOUR_UNLOCKED) != 0;
 			case AUGURY:
 				return client.getVarbitValue(VarbitID.PRAYER_AUGURY_UNLOCKED) != 0;
+			case DEADEYE:
+				return client.getVarbitValue(VarbitID.PRAYER_DEADEYE_UNLOCKED) != 0;
+			case MYSTIC_VIGOUR:
+				return client.getVarbitValue(VarbitID.PRAYER_MYSTIC_VIGOUR_UNLOCKED) != 0;
 			default:
 				return true;
 		}
@@ -600,6 +623,12 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			return cachedNormalPrayerBook;
 		}
 
+		if (cachedPrayerBookVariant != -1 && cachedPrayerBookVariant != variant)
+		{
+			// Unlocks can replace/re-sort fallback widgets while the interface is open.
+			// Restore the old layout before capturing or moving the new variant.
+			stopControllingLayout();
+		}
 		cachedPrayerBookVariant = variant;
 		prayerWidgetCache.clear();
 		quickPrayerWidgetCache.clear();

@@ -8,8 +8,10 @@ enum PrayerChoice
 	CHIVALRY("Chivalry", Prayer.CHIVALRY, 60, 65, PrayerUnlock.PIETY),
 	PIETY("Piety", Prayer.PIETY, 70, 70, PrayerUnlock.PIETY),
 	EAGLE_EYE("Eagle Eye", Prayer.EAGLE_EYE, 44, 1, PrayerUnlock.NONE),
+	DEADEYE("Deadeye", Prayer.DEADEYE, 62, 1, PrayerUnlock.DEADEYE),
 	RIGOUR("Rigour", Prayer.RIGOUR, 74, 70, PrayerUnlock.RIGOUR),
 	MYSTIC_MIGHT("Mystic Might", Prayer.MYSTIC_MIGHT, 45, 1, PrayerUnlock.NONE),
+	MYSTIC_VIGOUR("Mystic Vigour", Prayer.MYSTIC_VIGOUR, 63, 1, PrayerUnlock.MYSTIC_VIGOUR),
 	AUGURY("Augury", Prayer.AUGURY, 77, 70, PrayerUnlock.AUGURY);
 
 	private final String displayName;

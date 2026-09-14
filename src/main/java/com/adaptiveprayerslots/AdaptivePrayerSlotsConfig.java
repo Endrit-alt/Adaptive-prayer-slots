@@ -45,7 +45,7 @@ public interface AdaptivePrayerSlotsConfig extends Config
 	@ConfigItem(
 		keyName = "swapRanged",
 		name = "Adaptive ranged slot",
-		description = "Replace unavailable Rigour with Eagle Eye (requires 74 Prayer, 70 Defence and its unlock)",
+		description = "Use Eagle Eye or unlocked Deadeye in Rigour's slot when Rigour is unavailable",
 		position = 3
 	)
 	default boolean swapRanged()
@@ -56,7 +56,7 @@ public interface AdaptivePrayerSlotsConfig extends Config
 	@ConfigItem(
 		keyName = "swapMagic",
 		name = "Adaptive magic slot",
-		description = "Replace unavailable Augury with Mystic Might (requires 77 Prayer, 70 Defence and its unlock)",
+		description = "Use Mystic Might or unlocked Mystic Vigour in Augury's slot when Augury is unavailable",
 		position = 4
 	)
 	default boolean swapMagic()
