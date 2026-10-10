@@ -65,7 +65,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private final Map<PrayerChoice, QuickPrayerWidgets> quickPrayerWidgetCache = new EnumMap<>(PrayerChoice.class);
 	private final Map<PrayerSwap, PrayerChoice> displayedChoices = new EnumMap<>(PrayerSwap.class);
 	private final Map<Widget, WidgetState> quickPrayerBaseline = new IdentityHashMap<>();
-	private final PvpChallengeRules pvpChallengeRules = new PvpChallengeRules();
+	private final PeteKayerChallengeRules peteKayerChallengeRules = new PeteKayerChallengeRules();
 	private final PrayerRedrawScheduler redrawScheduler = new PrayerRedrawScheduler(
 		task -> clientThread.invokeLater(task), this::redrawPrayerBook, this::applyCurrentSwaps);
 	private Widget cachedQuickPrayerContainer;
@@ -205,29 +205,29 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 		Player player = client.getLocalPlayer();
 		int[] varps = client.getVarps();
-		int tutorial = varps.length > PvpChallengeRules.ACTIVE_TUTORIAL_VARP
-			? varps[PvpChallengeRules.ACTIVE_TUTORIAL_VARP] : -1;
-		boolean inPvpChallenge = !inLms && player != null
-			&& PvpChallengeRules.isActive(tutorial, player.getWorldLocation().getX());
+		int tutorial = varps.length > PeteKayerChallengeRules.ACTIVE_TUTORIAL_VARP
+			? varps[PeteKayerChallengeRules.ACTIVE_TUTORIAL_VARP] : -1;
+		boolean inPeteKayerChallenge = !inLms && player != null
+			&& PeteKayerChallengeRules.isActive(tutorial, player.getWorldLocation().getX());
 		int effectivePrayerLevel;
 		int effectiveDefenceLevel;
-		if (inPvpChallenge)
+		if (inPeteKayerChallenge)
 		{
 			// The challenge grants prayer access independently of base stats and current
 			// Prayer points. Follow its availability overrides, not boosted/drained stats.
-			effectivePrayerLevel = pvpChallengeRules.getPrayerLevel(client, tutorial);
+			effectivePrayerLevel = peteKayerChallengeRules.getPrayerLevel(client, tutorial);
 			if (effectivePrayerLevel < 0)
 			{
 				// Unknown challenge data: leave the game's layout alone rather than guess.
 				stopControllingLayout();
 				return;
 			}
-			effectiveDefenceLevel = PvpChallengeRules.resolveDefenceLevel(
+			effectiveDefenceLevel = PeteKayerChallengeRules.resolveDefenceLevel(
 				client.getVarbitValue(VarbitID.BR_ACTIVE_BUILD_PLAYER));
 		}
 		else
 		{
-			pvpChallengeRules.clear();
+			peteKayerChallengeRules.clear();
 			effectivePrayerLevel = resolveEffectiveLevel(
 				inLms,
 				client.getRealSkillLevel(Skill.PRAYER),
@@ -237,7 +237,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 				client.getRealSkillLevel(Skill.DEFENCE),
 				client.getBoostedSkillLevel(Skill.DEFENCE));
 		}
-		applySwaps(inLms || inPvpChallenge, effectivePrayerLevel, effectiveDefenceLevel);
+		applySwaps(inLms || inPeteKayerChallenge, effectivePrayerLevel, effectiveDefenceLevel);
 	}
 
 	private void stopControllingLayout()
@@ -679,7 +679,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private void invalidateAllCaches()
 	{
-		pvpChallengeRules.clear();
+		peteKayerChallengeRules.clear();
 		prayerWidgetCache.clear();
 		quickPrayerWidgetCache.clear();
 		cachedQuickPrayerContainer = null;

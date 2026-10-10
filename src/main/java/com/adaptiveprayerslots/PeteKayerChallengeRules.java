@@ -5,7 +5,7 @@ import net.runelite.api.Skill;
 import net.runelite.api.dbtable.DBRowConfig;
 
 // Mirrors prayer_overrides and script9971, without running scripts from an event callback.
-final class PvpChallengeRules
+final class PeteKayerChallengeRules
 {
 	// Current gameval names: VarPlayerID.PVPTUT_ACTIVE_TUTORIAL,
 	// DBTableID.PvpTutorial.ID / COL_MODIFIED_STATS. Not yet in RuneLite 1.13.1.
