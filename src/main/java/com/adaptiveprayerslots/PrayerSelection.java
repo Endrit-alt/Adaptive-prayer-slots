@@ -13,7 +13,7 @@ final class PrayerSelection
 		PrayerSwap swap,
 		PrayerChoice fallback,
 		MeleeFallbackChain chain,
-		boolean inLms,
+		boolean temporaryUnlocks,
 		int prayer,
 		int defence,
 		Predicate<PrayerUnlock> unlocked,
@@ -23,7 +23,7 @@ final class PrayerSelection
 		boolean useChivalry = swap == PrayerSwap.MELEE
 			&& chain == MeleeFallbackChain.CHIVALRY_THEN_ULTIMATE;
 		PrayerChoice desired;
-		if (isEligible(swap.getHighPrayer(), inLms, prayer, defence, unlocked))
+		if (isEligible(swap.getHighPrayer(), temporaryUnlocks, prayer, defence, unlocked))
 		{
 			if (fallback != swap.getDefaultFallback())
 			{
@@ -33,11 +33,11 @@ final class PrayerSelection
 			}
 			desired = swap.getHighPrayer();
 		}
-		else if (useChivalry && isEligible(PrayerChoice.CHIVALRY, inLms, prayer, defence, unlocked))
+		else if (useChivalry && isEligible(PrayerChoice.CHIVALRY, temporaryUnlocks, prayer, defence, unlocked))
 		{
 			desired = PrayerChoice.CHIVALRY;
 		}
-		else if (isEligible(fallback, inLms, prayer, defence, unlocked))
+		else if (isEligible(fallback, temporaryUnlocks, prayer, defence, unlocked))
 		{
 			desired = fallback;
 		}
@@ -64,9 +64,9 @@ final class PrayerSelection
 	}
 
 	private static boolean isEligible(
-		PrayerChoice choice, boolean inLms, int prayer, int defence, Predicate<PrayerUnlock> unlocked)
+		PrayerChoice choice, boolean temporaryUnlocks, int prayer, int defence, Predicate<PrayerUnlock> unlocked)
 	{
 		return choice.meetsLevels(prayer, defence)
-			&& (inLms || choice.getUnlock() == PrayerUnlock.NONE || unlocked.test(choice.getUnlock()));
+			&& (temporaryUnlocks || choice.getUnlock() == PrayerUnlock.NONE || unlocked.test(choice.getUnlock()));
 	}
 }

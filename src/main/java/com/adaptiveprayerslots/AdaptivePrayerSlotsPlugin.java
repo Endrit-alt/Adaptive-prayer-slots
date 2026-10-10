@@ -14,6 +14,7 @@ import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ParamID;
+import net.runelite.api.Player;
 import net.runelite.api.ScriptID;
 import net.runelite.api.Skill;
 import net.runelite.api.events.GameStateChanged;
@@ -64,6 +65,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private final Map<PrayerChoice, QuickPrayerWidgets> quickPrayerWidgetCache = new EnumMap<>(PrayerChoice.class);
 	private final Map<PrayerSwap, PrayerChoice> displayedChoices = new EnumMap<>(PrayerSwap.class);
 	private final Map<Widget, WidgetState> quickPrayerBaseline = new IdentityHashMap<>();
+	private final PvpChallengeRules pvpChallengeRules = new PvpChallengeRules();
 	private final PrayerRedrawScheduler redrawScheduler = new PrayerRedrawScheduler(
 		task -> clientThread.invokeLater(task), this::redrawPrayerBook, this::applyCurrentSwaps);
 	private Widget cachedQuickPrayerContainer;
@@ -201,15 +203,41 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			return;
 		}
 
-		int effectivePrayerLevel = resolveEffectiveLevel(
-			inLms,
-			client.getRealSkillLevel(Skill.PRAYER),
-			client.getBoostedSkillLevel(Skill.PRAYER));
-		int effectiveDefenceLevel = resolveEffectiveLevel(
-			inLms,
-			client.getRealSkillLevel(Skill.DEFENCE),
-			client.getBoostedSkillLevel(Skill.DEFENCE));
-		applySwaps(inLms, effectivePrayerLevel, effectiveDefenceLevel);
+		Player player = client.getLocalPlayer();
+		int[] varps = client.getVarps();
+		int tutorial = varps.length > PvpChallengeRules.ACTIVE_TUTORIAL_VARP
+			? varps[PvpChallengeRules.ACTIVE_TUTORIAL_VARP] : -1;
+		boolean inPvpChallenge = !inLms && player != null
+			&& PvpChallengeRules.isActive(tutorial, player.getWorldLocation().getX());
+		int effectivePrayerLevel;
+		int effectiveDefenceLevel;
+		if (inPvpChallenge)
+		{
+			// The challenge grants prayer access independently of base stats and current
+			// Prayer points. Follow its availability overrides, not boosted/drained stats.
+			effectivePrayerLevel = pvpChallengeRules.getPrayerLevel(client, tutorial);
+			if (effectivePrayerLevel < 0)
+			{
+				// Unknown challenge data: leave the game's layout alone rather than guess.
+				stopControllingLayout();
+				return;
+			}
+			effectiveDefenceLevel = PvpChallengeRules.resolveDefenceLevel(
+				client.getVarbitValue(VarbitID.BR_ACTIVE_BUILD_PLAYER));
+		}
+		else
+		{
+			pvpChallengeRules.clear();
+			effectivePrayerLevel = resolveEffectiveLevel(
+				inLms,
+				client.getRealSkillLevel(Skill.PRAYER),
+				client.getBoostedSkillLevel(Skill.PRAYER));
+			effectiveDefenceLevel = resolveEffectiveLevel(
+				inLms,
+				client.getRealSkillLevel(Skill.DEFENCE),
+				client.getBoostedSkillLevel(Skill.DEFENCE));
+		}
+		applySwaps(inLms || inPvpChallenge, effectivePrayerLevel, effectiveDefenceLevel);
 	}
 
 	private void stopControllingLayout()
@@ -228,7 +256,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		redrawScheduler.request();
 	}
 
-	private void applySwaps(boolean inLms, int effectivePrayerLevel, int effectiveDefenceLevel)
+	private void applySwaps(boolean temporaryUnlocks, int effectivePrayerLevel, int effectiveDefenceLevel)
 	{
 		EnumComposition prayerBook = getNormalPrayerBook();
 		if (redrawScheduler.isPending())
@@ -264,7 +292,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			}
 
 			PrayerChoice selected = PrayerSelection.select(
-				swap, getFallback(swap), config.meleeFallbackChain(), inLms, effectivePrayerLevel, effectiveDefenceLevel,
+				swap, getFallback(swap), config.meleeFallbackChain(), temporaryUnlocks, effectivePrayerLevel, effectiveDefenceLevel,
 				this::isUnlocked, displayedChoices.get(swap), choice -> client.isPrayerActive(choice.getPrayer()));
 			if (selected != null)
 			{
@@ -651,6 +679,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 
 	private void invalidateAllCaches()
 	{
+		pvpChallengeRules.clear();
 		prayerWidgetCache.clear();
 		quickPrayerWidgetCache.clear();
 		cachedQuickPrayerContainer = null;
