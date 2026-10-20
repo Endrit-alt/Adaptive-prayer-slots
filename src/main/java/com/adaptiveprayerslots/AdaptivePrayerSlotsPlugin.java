@@ -9,11 +9,7 @@ import java.util.Set;
 import javax.inject.Inject;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
-import net.runelite.api.EnumComposition;
-import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
-import net.runelite.api.ItemComposition;
-import net.runelite.api.ParamID;
 import net.runelite.api.Player;
 import net.runelite.api.ScriptID;
 import net.runelite.api.Skill;
@@ -59,13 +55,14 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	private boolean controllingLayout;
 	private boolean suspendedForReordering;
 	private boolean reorderWarningShown;
-	private int cachedPrayerBookVariant = -1;
-	private EnumComposition cachedNormalPrayerBook;
+	private PrayerBookSnapshot prayerBook;
+	private final PrayerBookResolver prayerBookResolver = new PrayerBookResolver();
+	private boolean resolutionPending;
+	private long resolutionGeneration;
 	private final Map<PrayerChoice, Widget> prayerWidgetCache = new EnumMap<>(PrayerChoice.class);
 	private final Map<PrayerChoice, QuickPrayerWidgets> quickPrayerWidgetCache = new EnumMap<>(PrayerChoice.class);
 	private final Map<PrayerSwap, PrayerChoice> displayedChoices = new EnumMap<>(PrayerSwap.class);
 	private final Map<Widget, WidgetState> quickPrayerBaseline = new IdentityHashMap<>();
-	private final PeteKayerChallengeRules peteKayerChallengeRules = new PeteKayerChallengeRules();
 	private final PrayerRedrawScheduler redrawScheduler = new PrayerRedrawScheduler(
 		task -> clientThread.invokeLater(task), this::redrawPrayerBook, this::applyCurrentSwaps);
 	private Widget cachedQuickPrayerContainer;
@@ -107,16 +104,17 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	{
 		if (running && client.getGameState() == GameState.LOGGED_IN)
 		{
-			applyCurrentSwaps();
+			requestPrayerRefresh();
 		}
 	}
 
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		if (running && (event.getSkill() == Skill.PRAYER || event.getSkill() == Skill.DEFENCE))
+		if (running && (event.getSkill() == Skill.PRAYER || event.getSkill() == Skill.DEFENCE
+			|| event.getSkill() == Skill.ATTACK || event.getSkill() == Skill.STRENGTH))
 		{
-			applyCurrentSwaps();
+			requestPrayerRefresh();
 		}
 	}
 
@@ -150,12 +148,12 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			quickPrayerBaseline.clear();
 			quickPrayerWidgetCache.clear();
 			cachedQuickPrayerContainer = null;
-			applyCurrentSwaps();
+			requestPrayerRefresh();
 		}
 		else if (scriptId == ScriptID.PRAYER_REDRAW)
 		{
 			prayerWidgetCache.clear();
-			applyCurrentSwaps();
+			requestPrayerRefresh();
 		}
 		else if (scriptId == ScriptID.PRAYER_UPDATEBUTTON)
 		{
@@ -184,60 +182,114 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		}
 	}
 
-	private void applyCurrentSwaps()
+	private boolean isInScope()
 	{
-		if (!running || client.getGameState() != GameState.LOGGED_IN || redrawScheduler.isPending())
+		if (!running || client.getGameState() != GameState.LOGGED_IN
+			|| client.getVarbitValue(VarbitID.PRAYERBOOK) != 0)
 		{
-			return;
+			return false;
 		}
+		if (!config.lmsOnly())
+		{
+			return true;
+		}
+		Player player = client.getLocalPlayer();
+		return client.getVarbitValue(VarbitID.BR_INGAME) == 1 && player != null
+			&& player.getWorldLocation().getX() >= 6400;
+	}
 
-		boolean inLms = client.getVarbitValue(VarbitID.BR_INGAME) != 0;
-		if (config.lmsOnly() && !inLms)
+	private void requestPrayerRefresh()
+	{
+		if (!isInScope())
 		{
 			stopControllingLayout();
 			return;
 		}
-
-		if (client.getVarbitValue(VarbitID.PRAYERBOOK) != 0)
+		if (resolutionPending || redrawScheduler.isPending())
 		{
 			return;
 		}
-
-		Player player = client.getLocalPlayer();
-		int[] varps = client.getVarps();
-		int tutorial = varps.length > PeteKayerChallengeRules.ACTIVE_TUTORIAL_VARP
-			? varps[PeteKayerChallengeRules.ACTIVE_TUTORIAL_VARP] : -1;
-		boolean inPeteKayerChallenge = !inLms && player != null
-			&& PeteKayerChallengeRules.isActive(tutorial, player.getWorldLocation().getX());
-		int effectivePrayerLevel;
-		int effectiveDefenceLevel;
-		if (inPeteKayerChallenge)
+		resolutionPending = true;
+		long generation = resolutionGeneration;
+		clientThread.invokeLater(() ->
 		{
-			// The challenge grants prayer access independently of base stats and current
-			// Prayer points. Follow its availability overrides, not boosted/drained stats.
-			effectivePrayerLevel = peteKayerChallengeRules.getPrayerLevel(client, tutorial);
-			if (effectivePrayerLevel < 0)
+			if (generation != resolutionGeneration)
 			{
-				// Unknown challenge data: leave the game's layout alone rather than guess.
-				stopControllingLayout();
 				return;
 			}
-			effectiveDefenceLevel = PeteKayerChallengeRules.resolveDefenceLevel(
-				client.getVarbitValue(VarbitID.BR_ACTIVE_BUILD_PLAYER));
-		}
-		else
+			try
+			{
+				if (!isInScope())
+				{
+					stopControllingLayout();
+					return;
+				}
+				if (redrawScheduler.isPending())
+				{
+					return;
+				}
+				// These read-only game scripts must execute after the current script returns.
+				PrayerBookSnapshot resolved = prayerBookResolver.resolve(client);
+				if (generation != resolutionGeneration)
+				{
+					return;
+				}
+				if (resolved == null)
+				{
+					prayerBook = null;
+					stopControllingLayout();
+					return;
+				}
+				if (!resolved.hasSameLayout(prayerBook))
+				{
+					if (prayerBook != null && (controllingLayout || suspendedForReordering))
+					{
+						stopControllingLayout();
+						return;
+					}
+					prayerWidgetCache.clear();
+					quickPrayerWidgetCache.clear();
+				}
+				prayerBook = resolved;
+			}
+			catch (RuntimeException ex)
+			{
+				prayerBook = null;
+				stopControllingLayout();
+				throw ex;
+			}
+			finally
+			{
+				if (generation == resolutionGeneration)
+				{
+					resolutionPending = false;
+				}
+			}
+			if (generation == resolutionGeneration)
+			{
+				applyCurrentSwaps();
+			}
+		});
+	}
+
+	private void applyCurrentSwaps()
+	{
+		if (!running || client.getGameState() != GameState.LOGGED_IN
+			|| redrawScheduler.isPending() || resolutionPending)
 		{
-			peteKayerChallengeRules.clear();
-			effectivePrayerLevel = resolveEffectiveLevel(
-				inLms,
-				client.getRealSkillLevel(Skill.PRAYER),
-				client.getBoostedSkillLevel(Skill.PRAYER));
-			effectiveDefenceLevel = resolveEffectiveLevel(
-				inLms,
-				client.getRealSkillLevel(Skill.DEFENCE),
-				client.getBoostedSkillLevel(Skill.DEFENCE));
+			return;
 		}
-		applySwaps(inLms || inPeteKayerChallenge, effectivePrayerLevel, effectiveDefenceLevel);
+		if (!isInScope())
+		{
+			stopControllingLayout();
+			return;
+		}
+		if (prayerBook == null)
+		{
+			requestPrayerRefresh();
+			return;
+		}
+		applySwaps(prayerBook);
 	}
 
 	private void stopControllingLayout()
@@ -256,9 +308,8 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		redrawScheduler.request();
 	}
 
-	private void applySwaps(boolean temporaryUnlocks, int effectivePrayerLevel, int effectiveDefenceLevel)
+	private void applySwaps(PrayerBookSnapshot prayerBook)
 	{
-		EnumComposition prayerBook = getNormalPrayerBook();
 		if (redrawScheduler.isPending())
 		{
 			return;
@@ -268,7 +319,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		{
 			if (isEnabled(swap))
 			{
-				allControlledChoices.addAll(getControlledChoices(swap));
+				allControlledChoices.addAll(getControlledChoices(swap, prayerBook));
 			}
 		}
 
@@ -292,8 +343,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 			}
 
 			PrayerChoice selected = PrayerSelection.select(
-				swap, getFallback(swap), config.meleeFallbackChain(), temporaryUnlocks, effectivePrayerLevel, effectiveDefenceLevel,
-				this::isUnlocked, displayedChoices.get(swap), choice -> client.isPrayerActive(choice.getPrayer()));
+				swap, prayerBook.getHighPrayer(swap), prayerBook.getFallback(swap), config.meleeFallbackChain(),
+				prayerBook::isAvailable, displayedChoices.get(swap),
+				choice -> client.getVarbitValue(choice.getActiveVarbit()) != 0);
 			if (selected != null)
 			{
 				selections.put(swap, selected);
@@ -315,9 +367,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		{
 			PrayerSwap swap = entry.getKey();
 			PrayerChoice selected = entry.getValue();
-			Set<PrayerChoice> controlledChoices = getControlledChoices(swap);
-			applySwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
-			applyQuickPrayerSwap(prayerBook, swap.getHighPrayer(), selected, controlledChoices);
+			Set<PrayerChoice> controlledChoices = getControlledChoices(swap, prayerBook);
+			applySwap(prayerBook, prayerBook.getHighPrayer(swap), selected, controlledChoices);
+			applyQuickPrayerSwap(prayerBook, prayerBook.getHighPrayer(swap), selected, controlledChoices);
 			displayedChoices.put(swap, selected);
 		}
 	}
@@ -337,29 +389,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		invalidateAllCaches();
 	}
 
-	static int resolveEffectiveLevel(boolean inLms, int realLevel, int boostedLevel)
+	private Set<PrayerChoice> getControlledChoices(PrayerSwap swap, PrayerBookSnapshot prayerBook)
 	{
-		return inLms ? boostedLevel : realLevel;
-	}
-
-	private PrayerChoice getFallback(PrayerSwap swap)
-	{
-		// Use the same variant as widget lookup: Titan prayers replace, rather than
-		// coexist with, Eagle Eye/Mystic Might in the prayer-book enum.
-		if (swap == PrayerSwap.RANGED && (cachedPrayerBookVariant & 1) != 0)
-		{
-			return PrayerChoice.DEADEYE;
-		}
-		if (swap == PrayerSwap.MAGIC && (cachedPrayerBookVariant & 2) != 0)
-		{
-			return PrayerChoice.MYSTIC_VIGOUR;
-		}
-		return swap.getDefaultFallback();
-	}
-
-	private Set<PrayerChoice> getControlledChoices(PrayerSwap swap)
-	{
-		EnumSet<PrayerChoice> choices = EnumSet.of(swap.getHighPrayer(), getFallback(swap));
+		EnumSet<PrayerChoice> choices = EnumSet.of(prayerBook.getHighPrayer(swap), prayerBook.getFallback(swap));
 		if (swap == PrayerSwap.MELEE
 			&& config.meleeFallbackChain() == MeleeFallbackChain.CHIVALRY_THEN_ULTIMATE)
 		{
@@ -368,28 +400,8 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		return choices;
 	}
 
-	private boolean isUnlocked(PrayerUnlock unlock)
-	{
-		switch (unlock)
-		{
-			case PIETY:
-				return client.getVarbitValue(VarbitID.KR_KNIGHTWAVES_STATE) >= 8
-					|| client.getVarbitValue(VarbitID.HUMBLE_PIETY) != 0;
-			case RIGOUR:
-				return client.getVarbitValue(VarbitID.PRAYER_RIGOUR_UNLOCKED) != 0;
-			case AUGURY:
-				return client.getVarbitValue(VarbitID.PRAYER_AUGURY_UNLOCKED) != 0;
-			case DEADEYE:
-				return client.getVarbitValue(VarbitID.PRAYER_DEADEYE_UNLOCKED) != 0;
-			case MYSTIC_VIGOUR:
-				return client.getVarbitValue(VarbitID.PRAYER_MYSTIC_VIGOUR_UNLOCKED) != 0;
-			default:
-				return true;
-		}
-	}
-
 	private void applySwap(
-		EnumComposition prayerBook,
+		PrayerBookSnapshot prayerBook,
 		PrayerChoice highChoice,
 		PrayerChoice selectedChoice,
 		Set<PrayerChoice> controlledChoices)
@@ -419,7 +431,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 	}
 
 	private void applyQuickPrayerSwap(
-		EnumComposition prayerBook,
+		PrayerBookSnapshot prayerBook,
 		PrayerChoice highChoice,
 		PrayerChoice selectedChoice,
 		Set<PrayerChoice> controlledChoices)
@@ -452,31 +464,31 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		setHidden(selectedPrayer, false);
 	}
 
-	private Widget findPrayerWidget(EnumComposition prayerBook, PrayerChoice choice)
+	private Widget findPrayerWidget(PrayerBookSnapshot prayerBook, PrayerChoice choice)
 	{
+		PrayerBookSnapshot.Entry entry = prayerBook.get(choice);
+		if (entry == null)
+		{
+			return null;
+		}
+		Widget widget = client.getWidget(entry.componentId);
 		Widget cached = prayerWidgetCache.get(choice);
-		if (cached != null)
+		if (cached != null && cached == widget)
 		{
 			return cached;
 		}
-
-		for (int prayerObjectId : prayerBook.getIntVals())
+		if (widget != null)
 		{
-			ItemComposition prayer = client.getItemDefinition(prayerObjectId);
-			if (prayer.getIntValue(ParamID.OC_PRAYER_LEVEL) == choice.getPrayerLevel())
-			{
-				Widget widget = client.getWidget(prayer.getIntValue(ParamID.OC_PRAYER_COMPONENT));
-				if (widget != null)
-				{
-					prayerWidgetCache.put(choice, widget);
-				}
-				return widget;
-			}
+			prayerWidgetCache.put(choice, widget);
 		}
-		return null;
+		else
+		{
+			prayerWidgetCache.remove(choice);
+		}
+		return widget;
 	}
 
-	private QuickPrayerWidgets findQuickPrayerWidgets(EnumComposition prayerBook, PrayerChoice choice)
+	private QuickPrayerWidgets findQuickPrayerWidgets(PrayerBookSnapshot prayerBook, PrayerChoice choice)
 	{
 		Widget container = client.getWidget(InterfaceID.Quickprayer.BUTTONS);
 		if (container != cachedQuickPrayerContainer)
@@ -491,8 +503,8 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		}
 
 		Widget[] children = container.getDynamicChildren();
-		int prayerCount = prayerBook.size();
-		if (children == null || children.length != prayerCount * 3)
+		PrayerBookSnapshot.Entry entry = prayerBook.get(choice);
+		if (entry == null || children == null || children.length != prayerBook.getChildCount())
 		{
 			return null;
 		}
@@ -504,29 +516,9 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		}
 		quickPrayerWidgetCache.remove(choice);
 
-		int prayerId = -1;
-		int sortedIndex = 0;
-		int[] keys = prayerBook.getKeys();
-		int[] values = prayerBook.getIntVals();
-		if (keys.length != values.length)
-		{
-			return null;
-		}
-		for (int i = 0; i < values.length; i++)
-		{
-			int level = client.getItemDefinition(values[i]).getIntValue(ParamID.OC_PRAYER_LEVEL);
-			if (level == choice.getPrayerLevel())
-			{
-				prayerId = keys[i];
-			}
-			else if (level < choice.getPrayerLevel())
-			{
-				sortedIndex++;
-			}
-		}
-
-		int spriteIndex = prayerCount + 2 * sortedIndex;
-		if (prayerId < 0 || prayerId >= prayerCount || spriteIndex + 1 >= children.length
+		int prayerId = entry.targetIndex;
+		int spriteIndex = entry.spriteIndex;
+		if (prayerId < 0 || spriteIndex < 0 || prayerId >= children.length || spriteIndex + 1 >= children.length
 			|| children[prayerId] == null || children[spriteIndex] == null || children[spriteIndex + 1] == null)
 		{
 			return null;
@@ -565,7 +557,7 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		}
 	}
 
-	private boolean isReorderingUnlocked(EnumComposition prayerBook, Set<PrayerChoice> controlledChoices)
+	private boolean isReorderingUnlocked(PrayerBookSnapshot prayerBook, Set<PrayerChoice> controlledChoices)
 	{
 		for (PrayerChoice choice : controlledChoices)
 		{
@@ -642,49 +634,14 @@ public class AdaptivePrayerSlotsPlugin extends Plugin
 		quickPrayerWidgetCache.clear();
 	}
 
-	private EnumComposition getNormalPrayerBook()
-	{
-		int variant = (client.getVarbitValue(VarbitID.PRAYER_DEADEYE_UNLOCKED) != 0 ? 1 : 0)
-			| (client.getVarbitValue(VarbitID.PRAYER_MYSTIC_VIGOUR_UNLOCKED) != 0 ? 2 : 0);
-		if (cachedNormalPrayerBook != null && cachedPrayerBookVariant == variant)
-		{
-			return cachedNormalPrayerBook;
-		}
-
-		if (cachedPrayerBookVariant != -1 && cachedPrayerBookVariant != variant)
-		{
-			// Unlocks can replace/re-sort fallback widgets while the interface is open.
-			// Restore the old layout before capturing or moving the new variant.
-			stopControllingLayout();
-		}
-		cachedPrayerBookVariant = variant;
-		prayerWidgetCache.clear();
-		quickPrayerWidgetCache.clear();
-		switch (variant)
-		{
-			case 3:
-				cachedNormalPrayerBook = client.getEnum(EnumID.PRAYERS_NORMAL_DEADEYE_MYSTIC_VIGOUR);
-				break;
-			case 1:
-				cachedNormalPrayerBook = client.getEnum(EnumID.PRAYERS_NORMAL_DEADEYE);
-				break;
-			case 2:
-				cachedNormalPrayerBook = client.getEnum(EnumID.PRAYERS_NORMAL_MYSTIC_VIGOUR);
-				break;
-			default:
-				cachedNormalPrayerBook = client.getEnum(EnumID.PRAYERS_NORMAL);
-		}
-		return cachedNormalPrayerBook;
-	}
-
 	private void invalidateAllCaches()
 	{
-		peteKayerChallengeRules.clear();
+		resolutionGeneration++;
+		resolutionPending = false;
+		prayerBook = null;
 		prayerWidgetCache.clear();
 		quickPrayerWidgetCache.clear();
 		cachedQuickPrayerContainer = null;
-		cachedNormalPrayerBook = null;
-		cachedPrayerBookVariant = -1;
 	}
 
 	private boolean isEnabled(PrayerSwap swap)

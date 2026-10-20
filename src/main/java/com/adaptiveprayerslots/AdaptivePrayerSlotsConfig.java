@@ -23,7 +23,7 @@ public interface AdaptivePrayerSlotsConfig extends Config
 	@ConfigItem(
 		keyName = "swapMelee",
 		name = "Adaptive melee slot",
-		description = "Replace unavailable Piety using the selected melee fallback chain",
+		description = "Replace unavailable Zeal or Piety using the selected melee fallback chain",
 		position = 1
 	)
 	default boolean swapMelee()
@@ -34,7 +34,7 @@ public interface AdaptivePrayerSlotsConfig extends Config
 	@ConfigItem(
 		keyName = "meleeFallbackChain",
 		name = "Melee fallback chain",
-		description = "Choose whether usable Chivalry is preferred before Ultimate Strength",
+		description = "The game selects Zeal or Piety; choose its lower-level fallback chain",
 		position = 2
 	)
 	default MeleeFallbackChain meleeFallbackChain()

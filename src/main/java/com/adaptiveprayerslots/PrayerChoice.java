@@ -4,58 +4,41 @@ import net.runelite.api.Prayer;
 
 enum PrayerChoice
 {
-	ULTIMATE_STRENGTH("Ultimate Strength", Prayer.ULTIMATE_STRENGTH, 31, 1, PrayerUnlock.NONE),
-	CHIVALRY("Chivalry", Prayer.CHIVALRY, 60, 65, PrayerUnlock.PIETY),
-	PIETY("Piety", Prayer.PIETY, 70, 70, PrayerUnlock.PIETY),
-	EAGLE_EYE("Eagle Eye", Prayer.EAGLE_EYE, 44, 1, PrayerUnlock.NONE),
-	DEADEYE("Deadeye", Prayer.DEADEYE, 62, 1, PrayerUnlock.DEADEYE),
-	RIGOUR("Rigour", Prayer.RIGOUR, 74, 70, PrayerUnlock.RIGOUR),
-	MYSTIC_MIGHT("Mystic Might", Prayer.MYSTIC_MIGHT, 45, 1, PrayerUnlock.NONE),
-	MYSTIC_VIGOUR("Mystic Vigour", Prayer.MYSTIC_VIGOUR, 63, 1, PrayerUnlock.MYSTIC_VIGOUR),
-	AUGURY("Augury", Prayer.AUGURY, 77, 70, PrayerUnlock.AUGURY);
+	ULTIMATE_STRENGTH("Ultimate Strength", Prayer.ULTIMATE_STRENGTH.getVarbit()),
+	CHIVALRY("Chivalry", Prayer.CHIVALRY.getVarbit()),
+	PIETY("Piety", Prayer.PIETY.getVarbit()),
+	// VarbitID.PRAYER_ZEAL; numeric alias also builds with RuneLite 1.13.1.
+	ZEAL("Zeal", 16577),
+	EAGLE_EYE("Eagle Eye", Prayer.EAGLE_EYE.getVarbit()),
+	DEADEYE("Deadeye", Prayer.DEADEYE.getVarbit()),
+	RIGOUR("Rigour", Prayer.RIGOUR.getVarbit()),
+	MYSTIC_MIGHT("Mystic Might", Prayer.MYSTIC_MIGHT.getVarbit()),
+	MYSTIC_VIGOUR("Mystic Vigour", Prayer.MYSTIC_VIGOUR.getVarbit()),
+	AUGURY("Augury", Prayer.AUGURY.getVarbit());
 
 	private final String displayName;
-	private final Prayer prayer;
-	private final int prayerLevel;
-	private final int defenceLevel;
-	private final PrayerUnlock unlock;
+	private final int activeVarbit;
 
-	PrayerChoice(String displayName, Prayer prayer, int prayerLevel, int defenceLevel, PrayerUnlock unlock)
+	PrayerChoice(String displayName, int activeVarbit)
 	{
 		this.displayName = displayName;
-		this.prayer = prayer;
-		this.prayerLevel = prayerLevel;
-		this.defenceLevel = defenceLevel;
-		this.unlock = unlock;
+		this.activeVarbit = activeVarbit;
 	}
 
-	String getDisplayName()
+	int getActiveVarbit()
 	{
-		return displayName;
+		return activeVarbit;
 	}
 
-	Prayer getPrayer()
+	static PrayerChoice fromDisplayName(String name)
 	{
-		return prayer;
-	}
-
-	int getPrayerLevel()
-	{
-		return prayerLevel;
-	}
-
-	int getDefenceLevel()
-	{
-		return defenceLevel;
-	}
-
-	PrayerUnlock getUnlock()
-	{
-		return unlock;
-	}
-
-	boolean meetsLevels(int prayer, int defence)
-	{
-		return prayer >= prayerLevel && defence >= defenceLevel;
+		for (PrayerChoice choice : values())
+		{
+			if (choice.displayName.equalsIgnoreCase(name))
+			{
+				return choice;
+			}
+		}
+		return null;
 	}
 }

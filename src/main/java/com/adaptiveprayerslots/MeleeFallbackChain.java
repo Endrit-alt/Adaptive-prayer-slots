@@ -2,8 +2,8 @@ package com.adaptiveprayerslots;
 
 public enum MeleeFallbackChain
 {
-	ULTIMATE_ONLY("Ultimate Strength"),
-	CHIVALRY_THEN_ULTIMATE("Chivalry, then Ultimate Strength");
+	ULTIMATE_ONLY("Zeal/Piety → Ultimate Strength"),
+	CHIVALRY_THEN_ULTIMATE("Zeal/Piety → Chivalry → Ultimate Strength");
 
 	private final String displayName;
 
