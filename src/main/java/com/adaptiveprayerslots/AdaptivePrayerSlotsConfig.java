@@ -33,8 +33,8 @@ public interface AdaptivePrayerSlotsConfig extends Config
 
 	@ConfigItem(
 		keyName = "meleeFallbackChain",
-		name = "Melee fallback chain",
-		description = "The game selects Zeal or Piety; choose its lower-level fallback chain",
+		name = "Fallback",
+		description = "When the game-selected Zeal/Piety is unavailable, use Ultimate Strength or try Chivalry first",
 		position = 2
 	)
 	default MeleeFallbackChain meleeFallbackChain()
